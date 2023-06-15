@@ -1,0 +1,161 @@
+---
+title: "Genomics Data"
+author:Mercy Akinwale
+date: "2023-05-09"
+output: html_document
+---
+install libraries needed to run the analysis
+```{r}
+# install.packages(c("tidyverse","ggvenn","ggrepel"))
+# 
+# if (!require("BiocManager", quietly = TRUE))
+#     install.packages("BiocManager")
+# BiocManager::install(version = "3.17")
+# 
+# if (!require("BiocManager", quietly = TRUE))
+#     install.packages("BiocManager")
+# bio_pkgs = c("DESeq2","airway","GenomicDataCommons","magrittr","TCGAutils","TCGAbiolinks","GEOquery")
+# 
+# BiocManager::install(bio_pkgs)
+```
+Study Description.
+
+Sporozoite is the stage in which malaria parasites initially infect the vertebrate host. Elucidation of gene regulation in this stage will promote the investigation of mechanisms of liver infection by this parasite and contribute to development of strategies for preventing the malaria transmission. AP2-Sp is a transcription factor essential for formation of sporozoites or sporogony, which take place in oocysts on the midgut of infected mosquitoes. To understand the role of this transcription factor in the transcriptional regulatory system of this stage we performed ChIP-seq analysis using whole mosquito midguts containing late oocysts as start materials and explore its target genes genome-widely. Target genes were composed of 640 genes, which encompassed various functional categories and were contained genes involved in distinct processes parasites pass through in this stage, from sporogony to development into the liver stage. Furthermore, RNA-seq analysis showed that these genes constituted majority of the genes highly expressed in in this stage. These results suggested that this TF determines basal pattern of gene expression of this stage by targeting a broad range of genes directly.
+
+
+Plasmodium berghei transcriptomes were analyzed in oocyst/oocyst sporozoites and salivary gland sporozoites.
+
+acesss data @ https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE212753
+
+
+Acquire Required Datasets
+```{r}
+expData <- read.csv("GSE212753_counts_WT_sporozoite.txt", sep = "\t",header = T) 
+```
+There is no need to Merge files: Preprocess the data
+```{r}
+#make geneSymbols the rownames
+
+rownames(expData) = expData$Geneid
+
+#remove the IDs
+expData = expData[,c(2:7)] #removes the first column
+
+```
+Create design dataframe: a grouping/phenotype data is usually provided in some studies
+```{r}
+samples = colnames(expData)
+groups = c("midgut","midgut","midgut","salaiva","salaiva","salaiva")
+
+design_df = data.frame(samples,groups)
+
+all(colnames(expData)== design_df$sample)
+
+```
+Perform differential analysis
+```{r}
+library(DESeq2)
+library(tidyverse)
+library(airway)
+
+
+dds <- DESeqDataSetFromMatrix(countData = expData,
+                              colData = design_df,
+                              design = ~ groups)
+sumOfRows = (rowSums(counts(dds)))
+
+# pre-filtering: removing rows with low gene counts
+# keeping rows that have at least 10 reads total
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep,]
+dds
+# set the factor level
+
+
+dds$groups <- relevel(dds$groups, ref ="midgut")
+
+
+#Run dds <- DESeq(dds)
+dds <- DESeq(dds)
+Res<- results(dds, alpha = 0.05) 
+
+
+#Select DEGs
+Res = Res[order(abs(Res$log2FoldChange), decreasing = TRUE),] #sort results in respect to the absolute values of the log2FoldChange of each gene
+DEGs = rownames(Res)[1:10]
+
+result=data.frame(Res@listData)
+result$labels= Res@rownames
+summary(Res) #Visualize results and obtain the number of differentially expressed genes (DEG)
+
+```
+Construct a Mean Average plot
+```{r, fig.}
+plotMA(Res)
+```
+Construct a Volcano plot
+```{r}
+# # Load packages -----------------------------------------------------------
+ 
+ suppressPackageStartupMessages({
+   library(dplyr)
+   library(ggplot2)
+   library(ggrepel)
+ })
+
+# Get names for legend
+down <- unlist(strsplit('Down,Not Sig,Up', split = ","))[1]
+notsig <- unlist(strsplit('Down,Not Sig,Up', split = ","))[2]
+up <- unlist(strsplit('Down,Not Sig,Up', split = ","))[3]
+
+# Set colours
+colours <- setNames(c("cornflowerblue", "grey", "firebrick"), c(down, notsig, up))
+
+# Create significant (sig) column
+results <- mutate(result, sig = case_when(
+  padj < 0.05 & log2FoldChange > 0.0 ~ up,
+  padj < 0.05 & log2FoldChange < -0.0 ~ down,
+  TRUE ~ notsig))
+
+# Specify genes to label --------------------------------------------------
+
+# Get top genes by P value
+top <- slice_min(results, order_by = pvalue, n = 10)
+top <- slice_min(top, order_by = log2FoldChange, n = 10)
+# Extract into vector
+toplabels <- pull(top, labels)
+
+# Label just the top genes in results table
+results <- mutate(results, labels = ifelse(labels %in% toplabels, labels, ""))
+
+
+# Create plot -------------------------------------------------------------
+# Set up base plot
+p <- ggplot(data = results, aes(x = log2FoldChange, y = -log10(pvalue))) +
+  geom_point(aes(colour = sig)) +
+  scale_color_manual(values = colours) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"),
+        legend.key = element_blank())
+
+# Add gene labels
+p <- p + geom_text_repel(data = filter(results, labels != ""), aes(label = labels),
+                         min.segment.length = 0,
+                         max.overlaps = Inf,
+                         show.legend = FALSE)
+
+# Set legend title
+p <- p + theme(legend.title = element_blank())
+
+# Print plot
+print(p)
+table(results$sig)
+```
+
+
+```{r}
+table(results$sig)
+```
+
